@@ -1,6 +1,7 @@
 import json
 import time
 import os
+import subprocess
 from openai import OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
@@ -22,6 +23,28 @@ def log_event(event: dict):
     event["timestamp"] = time.time()
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(event) + "\n")
+
+
+def auto_push_log():
+    """Automatically commits and pushes run.jsonl to GitHub after each message."""
+    try:
+        # 1. Configure Git identity on the Railway server
+        subprocess.run(["git", "config", "--global", "user.email", "bot@railway.app"], check=False)
+        subprocess.run(["git", "config", "--global", "user.name", "Railway Bot"], check=False)
+
+        # 2. Authenticate using GITHUB_TOKEN if running on Railway
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if github_token:
+            repo_url = f"https://{github_token}@github.com/24f2006473/turtleanalysis.git"
+            subprocess.run(["git", "remote", "set-url", "origin", repo_url], check=False)
+
+        # 3. Stage, commit, and push run.jsonl
+        subprocess.run(["git", "add", "run.jsonl"], check=False)
+        subprocess.run(["git", "commit", "-m", "Auto-update run log [skip ci]"], check=False)
+        subprocess.run(["git", "push", "origin", "main"], check=False)
+        print("Successfully pushed updated run.jsonl to GitHub.")
+    except Exception as e:
+        print(f"Auto-push failed: {e}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -62,6 +85,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     log_event({"type": "outgoing", "chat_id": chat_id, "text": final_reply})
     await update.message.reply_text(final_reply)
+
+    auto_push_log()
 
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
